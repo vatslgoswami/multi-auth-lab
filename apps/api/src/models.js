@@ -1,0 +1,14 @@
+import mongoose from 'mongoose';
+const { Schema } = mongoose;
+const options = { versionKey: false };
+const tenant = new Schema({ _id: String, name: {type:String,required:true}, active: {type:Boolean,default:true} }, options);
+const account = new Schema({ _id: String, tenant: {type:String,ref:'Tenant',required:true}, name:String, roles: [{type:String,enum:['owner','editor','viewer']}], active:{type:Boolean,default:true} }, options);
+const session = new Schema({ _id:String, account:{type:String,ref:'Account',required:true}, tokenHash:{type:String,required:true,unique:true}, role:{type:String,enum:['owner','editor','viewer'],required:true}, expiresAt:{type:Date,required:true}, revokedAt:{type:Date,default:null} }, options);
+const document = new Schema({ _id:String, tenant:{type:String,ref:'Tenant',required:true,index:true}, owner:{type:String,ref:'Account',required:true}, title:{type:String,required:true}, body:{type:String,default:''}, visibility:{type:String,enum:['private','tenant'],required:true} }, options);
+const grant = new Schema({ document:{type:String,ref:'Document',required:true}, account:{type:String,ref:'Account',required:true}, permission:{type:String,enum:['read','write'],required:true} }, options);
+grant.index({document:1,account:1},{unique:true});
+export const Tenant = mongoose.model('Tenant',tenant);
+export const Account = mongoose.model('Account',account);
+export const Session = mongoose.model('Session',session);
+export const Document = mongoose.model('Document',document);
+export const Grant = mongoose.model('Grant',grant);

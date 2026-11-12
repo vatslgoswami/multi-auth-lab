@@ -1,6 +1,6 @@
 # Identity and authorization policy
 
-This document defines the intended policy for the environment. The checkpoint 1 scaffold does not yet implement authentication, documents, or these rules.
+This document defines the environment policy. The current API implements bearer sessions and document authorization using synthetic fixtures. Cookie transport, login, account switching, and browser protections are planned for later checkpoints.
 
 ## Identity and sessions
 
