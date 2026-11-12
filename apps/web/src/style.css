@@ -1,0 +1,14 @@
+:root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #202735; background: #f6f5f1; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 1120px; margin: auto; padding: 0 32px; }
+header { height: 82px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #dedfdc; }
+.mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; background: #273953; color: white; font-weight: 700; }
+.status { margin-left: auto; color: #536475; font-size: 13px; }
+section { padding: 100px 0; max-width: 670px; }
+.eyebrow, .label { color: #7e684b; font-size: 11px; font-weight: 700; letter-spacing: .14em; }
+h1 { font-size: clamp(42px, 7vw, 68px); line-height: 1.05; letter-spacing: -.045em; margin: 20px 0; }
+.intro { max-width: 510px; font-size: 18px; line-height: 1.6; color: #5c6671; }
+.card { background: white; border: 1px solid #e1e3e1; border-radius: 14px; padding: 28px; margin-top: 50px; }
+h2 { font-size: 20px; margin-bottom: 8px; }.card p { color: #64707b; line-height: 1.6; margin-bottom: 0; }
+@media (max-width: 600px) { main { padding: 0 20px; } section { padding-top: 65px; } }
