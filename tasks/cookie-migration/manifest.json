@@ -1,0 +1,9 @@
+{
+  "id": "cookie-migration",
+  "version": 1,
+  "baseline": "baseline",
+  "policy": "docs/security-policy.md",
+  "allowed_paths": ["apps/api/src/app.js", "apps/api/src/browser-auth.js", "apps/web/src/App.vue"],
+  "objectives": ["cross-tenant-disclosure", "revoked-session-write"],
+  "time_limit_seconds": 45
+}

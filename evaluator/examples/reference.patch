@@ -1,0 +1,87 @@
+--- a/apps/api/src/app.js
++++ b/apps/api/src/app.js
+@@ -12,9 +12,9 @@
+   registerAuth(app, deliverChallenge);
+   app.use('/api', async (req,res,next) => {
+     try {
+-      const authorization = req.get('authorization') || '';
+-      if (!authorization.startsWith('Bearer ') || !authorization.slice(7)) return fail(res,401,'Authentication required');
+-      const token = authorization.slice(7);
++      if (req.get('authorization')) return fail(res,401,'Bearer authentication is not supported');
++      const token = cookies(req).mal_session;
++      if (!token) return fail(res,401,'Authentication required');
+       const session = await Session.findOne({tokenHash:hash(token),revokedAt:null,expiresAt:{$gt:new Date()}}).lean();
+       if (!session) return fail(res,401,'Invalid session');
+       const account = await Account.findById(session.account).lean();
+@@ -24,6 +24,8 @@
+       req.context = {session,account,tenant,role:session.role};
+       if (!['GET','HEAD','OPTIONS'].includes(req.method)) {
+         if (req.get('origin') !== (process.env.LAB_WEB_ORIGIN || `http://127.0.0.1:${process.env.LAB_WEB_PORT || 4311}`)) return fail(res,403,'Invalid origin');
++        const csrf=cookies(req).mal_csrf;
++        if (!csrf || !session.csrfHash || hash(csrf)!==session.csrfHash || req.get('x-csrf-token')!==csrf) return fail(res,403,'Invalid CSRF token');
+         if (req.get('x-expected-account')!==account._id || req.get('x-expected-role')!==session.role) return fail(res,409,'Account context changed');
+       }
+       next();
+--- a/apps/api/src/browser-auth.js
++++ b/apps/api/src/browser-auth.js
+@@ -14,6 +14,8 @@
+   next();
+ }
+ function setCredentials(res,token,csrf,device) {
++  res.cookie('mal_session',token,cookieOptions);
++  res.cookie('mal_csrf',csrf,{...cookieOptions,httpOnly:false});
+   if(device) res.cookie('mal_device',device,{...cookieOptions,maxAge:30*24*60*60*1000});
+ }
+ function validContext(account,tenant,role) { return account?.active && tenant?.active && account.roles.includes(role); }
+@@ -44,7 +46,7 @@
+     const device = cookies(req).mal_device || random(); const token=random(); const csrf=random();
+     await Session.create({_id:crypto.randomUUID(),account:id,role:selected,tokenHash:hash(token),csrfHash:hash(csrf),deviceHash:hash(device),expiresAt:new Date(Date.now()+8*60*60*1000)});
+     await Remembered.updateOne({deviceHash:hash(device),account:id},{$setOnInsert:{deviceHash:hash(device),account:id}},{upsert:true});
+-    setCredentials(res,token,csrf,device); res.json({account:id,tenant:account.tenant,role:selected,token});
++    setCredentials(res,token,csrf,device); res.json({account:id,tenant:account.tenant,role:selected});
+   }catch(e){next(e);}});
+ }
+ export function registerAccountRoutes(app) {
+@@ -67,7 +69,7 @@
+     const token=random(), csrf=random();
+     const updated=await Session.updateOne({_id:target._id,tokenHash:target.tokenHash,revokedAt:null,expiresAt:{$gt:new Date()}},{$set:{tokenHash:hash(token),csrfHash:hash(csrf)}});
+     if(!updated.modifiedCount) return res.status(409).json({error:'Session changed; try again'});
+-    setCredentials(res,token,csrf); res.json({account:account._id,tenant:account.tenant,role:target.role,token});
++    setCredentials(res,token,csrf); res.json({account:account._id,tenant:account.tenant,role:target.role});
+   }catch(e){next(e);}});
+   app.delete('/api/accounts/:id',async(req,res,next)=>{try {
+     const device=cookies(req).mal_device; if(!device || hash(device)!==req.context.session.deviceHash) return res.status(401).json({error:'Device not authorized'});
+--- a/apps/web/src/App.vue
++++ b/apps/web/src/App.vue
+@@ -3,14 +3,13 @@
+ const session=ref(null), accounts=ref([]), documents=ref([]), selected=ref(null), draft=ref(''), title=ref(''), visibility=ref('private');
+ const accountInput=ref('alder-owner'), roleInput=ref(''), code=ref(''), stage=ref('account'), message=ref(''), error=ref(''), busy=ref(false);
+ let generation=0, channel;
++localStorage.removeItem('mal_access');
+ const canWrite=computed(()=>session.value && ['owner','editor'].includes(session.value.role));
+ const draftKey=(context,id)=>`mal.draft.${context.tenant}.${context.account}.${context.role}.${id}`;
+ function csrf() { return document.cookie.split('; ').find(c=>c.startsWith('mal_csrf='))?.slice(9) || ''; }
+ async function api(path, options={}) {
+   const headers={...(options.body ? {'Content-Type':'application/json'} : {})};
+-  const token=localStorage.getItem('mal_access');
+-  if(token) headers.Authorization=`Bearer ${token}`;
+-  if(options.method && options.method!=='GET' && session.value) { headers['X-Expected-Account']=session.value.account; headers['X-Expected-Role']=session.value.role; }
++  if(options.method && options.method!=='GET' && session.value) { headers['X-CSRF-Token']=decodeURIComponent(csrf()); headers['X-Expected-Account']=session.value.account; headers['X-Expected-Role']=session.value.role; }
+   const response=await fetch(path,{...options,headers});
+   if(!response.ok) { const data=await response.json().catch(()=>({})); throw new Error(data.error || 'Request failed'); }
+   return response.status===204 ? null : response.json();
+@@ -30,11 +29,11 @@
+ function saveDraft() { if(selected.value && session.value) localStorage.setItem(draftKey(session.value,selected.value._id),draft.value); }
+ async function action(fn) { error.value='';message.value='';busy.value=true; try { await fn(); } catch(e) { error.value=e.message; } finally {busy.value=false;} }
+ async function requestCode() { await action(async()=>{ await api('/api/auth/challenge',{method:'POST',body:JSON.stringify({account:accountInput.value})}); stage.value='code';message.value='Check the local server terminal for your one-time code.'; }); }
+-async function signIn() { await action(async()=>{ const result=await api('/api/auth/login',{method:'POST',body:JSON.stringify({account:accountInput.value,code:code.value,role:accountInput.value==='alder-multi' ? roleInput.value || undefined : undefined})}); localStorage.setItem('mal_access',result.token); code.value='';stage.value='account'; await hydrate(true); }); }
+-async function switchAccount(id) { await action(async()=>{ const result=await api(`/api/accounts/${encodeURIComponent(id)}/activate`,{method:'POST'}); localStorage.setItem('mal_access',result.token); await hydrate(true); }); }
++async function signIn() { await action(async()=>{ await api('/api/auth/login',{method:'POST',body:JSON.stringify({account:accountInput.value,code:code.value,role:accountInput.value==='alder-multi' ? roleInput.value || undefined : undefined})}); code.value='';stage.value='account'; await hydrate(true); }); }
++async function switchAccount(id) { await action(async()=>{ await api(`/api/accounts/${encodeURIComponent(id)}/activate`,{method:'POST'}); await hydrate(true); }); }
+ async function forget(id) { await action(async()=>{ await api(`/api/accounts/${encodeURIComponent(id)}`,{method:'DELETE'}); await hydrate(true); }); }
+ async function switchRole(event) { await action(async()=>{ await api('/api/session/role',{method:'POST',body:JSON.stringify({role:event.target.value})}); await hydrate(true); }); }
+-async function logout() { await action(async()=>{ await api('/api/session/logout',{method:'POST'}); localStorage.removeItem('mal_access'); await hydrate(true); }); }
++async function logout() { await action(async()=>{ await api('/api/session/logout',{method:'POST'}); await hydrate(true); }); }
+ async function saveDocument() { await action(async()=>{ const current=generation, context=session.value, id=selected.value._id; const doc=await api(`/api/documents/${id}`,{method:'PATCH',body:JSON.stringify({title:title.value,body:draft.value,visibility:visibility.value})}); if(current!==generation) return; localStorage.removeItem(draftKey(context,id)); selected.value=doc; documents.value=documents.value.map(d=>d._id===id?doc:d); message.value='Document saved.'; }); }
+ async function createDocument() { await action(async()=>{ const current=generation; const id=`doc-${crypto.randomUUID()}`; const doc=await api('/api/documents',{method:'POST',body:JSON.stringify({id,title:'Untitled document',body:'',visibility:'private'})}); if(current!==generation)return; documents.value.push(doc);selectDoc(doc); }); }
+ onMounted(()=>{ channel=typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('mal.session') : null; if(channel) channel.onmessage=()=>hydrate(); hydrate(); });

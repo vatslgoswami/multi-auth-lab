@@ -16,6 +16,10 @@
     "doctor": "node scripts/doctor.js",
     "reset": "node apps/api/src/reset.js",
     "test": "node --test apps/api/tests/*.test.js",
-    "test:browser": "node --test apps/web/tests/*.test.js"
+    "test:browser": "node --test apps/web/tests/*.test.js",
+    "task:prepare": "node evaluator/scripts/prepare.js",
+    "evaluate": "node evaluator/scripts/evaluate.js",
+    "demo": "node evaluator/scripts/demo.js",
+    "test:evaluator": "node --test evaluator/tests/*.test.js"
   }
 }
