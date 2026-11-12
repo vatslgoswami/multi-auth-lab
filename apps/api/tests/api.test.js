@@ -5,8 +5,10 @@ import { connect, disconnect, databaseUri } from '../src/db.js';
 import { resetFixtures, tokens } from '../src/fixtures.js';
 import { Account, Session, Tenant, Document, Grant } from '../src/models.js';
 import { createApp } from '../src/app.js';
-const app=createApp();
-const auth = (method,path,token) => request(app)[method](path).set('Authorization',`Bearer ${token}`);
+const inbox = new Map();
+const app=createApp({deliverChallenge:async ({account,code})=>inbox.set(account,code)});
+const contexts = { [tokens.owner]:['alder-owner','owner'], [tokens.editor]:['alder-editor','editor'], [tokens.viewer]:['alder-viewer','viewer'], [tokens.birch]:['birch-owner','owner'], [tokens.revoked]:['alder-editor','editor'], [tokens.expired]:['alder-editor','editor'], [tokens.multi]:['alder-multi','viewer'] };
+const auth = (method,path,token) => request(app)[method](path).set('Cookie', [`mal_session=${token}`, 'mal_csrf=dev-csrf']).set('Origin','http://127.0.0.1:4311').set('X-CSRF-Token','dev-csrf').set('X-Expected-Account',contexts[token]?.[0] || 'unknown').set('X-Expected-Role',contexts[token]?.[1] || 'viewer');
 before(async()=>{ if (!new URL(databaseUri()).pathname.startsWith('/multiauthlab_test_')) throw new Error('Tests require a dedicated multiauthlab_test_* database'); await connect(); });
 beforeEach(async()=>{ await resetFixtures(); });
 after(async()=>{ await disconnect(); });
@@ -56,4 +58,34 @@ test('expired, revoked, logged out, disabled and removed-role sessions fail',asy
 });
 test('reset URI must explicitly target disposable local databases',()=>{
   for (const uri of ['mongodb://example.com/multiauthlab_dev','mongodb://127.0.0.1/production','mongodb://127.0.0.1/multiauthlab_dev?x=1','mongodb://user:pass@localhost/multiauthlab_dev']) assert.throws(()=>databaseUri({LAB_MONGODB_URI:uri}));
+});
+
+
+test('one-time sign-in enforces origin, CSRF, context and one-use codes', async()=>{
+  const agent=request.agent(app), origin='http://127.0.0.1:4311';
+  assert.equal((await agent.post('/api/auth/challenge').send({account:'alder-owner'})).status,403);
+  assert.equal((await agent.post('/api/auth/challenge').set('Origin',origin).send({account:'alder-owner'})).status,200);
+  const code=inbox.get('alder-owner');
+  const login=await agent.post('/api/auth/login').set('Origin',origin).send({account:'alder-owner',code});
+  assert.equal(login.status,200);
+  assert.ok(login.headers['set-cookie'].some(c=>c.startsWith('mal_session=') && c.includes('HttpOnly')));
+  assert.equal((await agent.post('/api/auth/login').set('Origin',origin).send({account:'alder-owner',code})).status,401);
+  const csrf=decodeURIComponent(login.headers['set-cookie'].find(c=>c.startsWith('mal_csrf=')).split(';')[0].slice('mal_csrf='.length));
+  const body={body:'must not change'};
+  assert.equal((await agent.patch('/api/documents/alder-private').set('Origin',origin).set('X-Expected-Account','alder-owner').set('X-Expected-Role','owner').send(body)).status,403);
+  assert.equal((await agent.patch('/api/documents/alder-private').set('Origin','http://evil.example').set('X-CSRF-Token',csrf).set('X-Expected-Account','alder-owner').set('X-Expected-Role','owner').send(body)).status,403);
+  assert.equal((await agent.patch('/api/documents/alder-private').set('Origin',origin).set('X-CSRF-Token',csrf).set('X-Expected-Account','birch-owner').set('X-Expected-Role','owner').send(body)).status,409);
+  assert.equal((await Document.findById('alder-private')).body,'Alder private');
+  assert.equal((await agent.get('/api/session').set('Authorization',`Bearer ${tokens.owner}`)).status,401);
+});
+
+
+test('another browser cannot activate an account without a remembered link', async()=>{
+  const agent=request.agent(app), origin='http://127.0.0.1:4311';
+  await agent.post('/api/auth/challenge').set('Origin',origin).send({account:'alder-owner'});
+  const login=await agent.post('/api/auth/login').set('Origin',origin).send({account:'alder-owner',code:inbox.get('alder-owner')});
+  const csrf=decodeURIComponent(login.headers['set-cookie'].find(c=>c.startsWith('mal_csrf=')).split(';')[0].slice('mal_csrf='.length));
+  const result=await agent.post('/api/accounts/birch-owner/activate').set('Origin',origin).set('X-CSRF-Token',csrf).set('X-Expected-Account','alder-owner').set('X-Expected-Role','owner');
+  assert.equal(result.status,401);
+  assert.equal((await agent.get('/api/session')).body.account,'alder-owner');
 });

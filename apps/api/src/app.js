@@ -1,31 +1,39 @@
 import express from 'express';
-import crypto from 'node:crypto';
+import { cookies, hash, registerAuth, registerAccountRoutes, requireOrigin } from './browser-auth.js';
 import { Account, Document, Grant, Session, Tenant } from './models.js';
-const hash = token => crypto.createHash('sha256').update(token).digest('hex');
 const validId = value => typeof value === 'string' && /^[a-z0-9-]{1,64}$/.test(value);
 const fail = (res,status,message) => res.status(status).json({error:message});
 
-export function createApp() {
+export function createApp({ deliverChallenge = async ({account,code}) => console.log(`[local inbox] ${account}: ${code}`) } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({limit:'32kb'}));
   app.get('/api/health', (_req,res) => res.json({status:'ok',stage:'protected-api'}));
+  registerAuth(app, deliverChallenge);
   app.use('/api', async (req,res,next) => {
     try {
-      const auth = req.get('authorization') || '';
-      if (!auth.startsWith('Bearer ') || !auth.slice(7)) return fail(res,401,'Authentication required');
-      const session = await Session.findOne({tokenHash:hash(auth.slice(7)),revokedAt:null,expiresAt:{$gt:new Date()}}).lean();
+      if (req.get('authorization')) return fail(res,401,'Bearer authentication is not supported');
+      const token = cookies(req).mal_session;
+      if (!token) return fail(res,401,'Authentication required');
+      const session = await Session.findOne({tokenHash:hash(token),revokedAt:null,expiresAt:{$gt:new Date()}}).lean();
       if (!session) return fail(res,401,'Invalid session');
       const account = await Account.findById(session.account).lean();
       if (!account?.active || !account.tenant || !account.roles.includes(session.role)) return fail(res,401,'Invalid session');
       const tenant = await Tenant.findById(account.tenant).lean();
       if (!tenant?.active) return fail(res,401,'Invalid session');
       req.context = {session,account,tenant,role:session.role};
+      if (!['GET','HEAD','OPTIONS'].includes(req.method)) {
+        if (req.get('origin') !== (process.env.LAB_WEB_ORIGIN || `http://127.0.0.1:${process.env.LAB_WEB_PORT || 4311}`)) return fail(res,403,'Invalid origin');
+        const csrf=cookies(req).mal_csrf;
+        if (!csrf || !session.csrfHash || hash(csrf)!==session.csrfHash || req.get('x-csrf-token')!==csrf) return fail(res,403,'Invalid CSRF token');
+        if (req.get('x-expected-account')!==account._id || req.get('x-expected-role')!==session.role) return fail(res,409,'Account context changed');
+      }
       next();
     } catch (error) { next(error); }
   });
-  app.get('/api/session', (req,res) => res.json({account:req.context.account._id,tenant:req.context.tenant._id,role:req.context.role}));
-  app.post('/api/session/logout', async (req,res,next) => { try { await Session.updateOne({_id:req.context.session._id},{$set:{revokedAt:new Date()}}); res.status(204).end(); } catch(e) {next(e);} });
+  registerAccountRoutes(app);
+  app.get('/api/session', (req,res) => res.json({account:req.context.account._id,name:req.context.account.name,tenant:req.context.tenant._id,tenantName:req.context.tenant.name,role:req.context.role,roles:req.context.account.roles}));
+  app.post('/api/session/logout', async (req,res,next) => { try { await Session.updateOne({_id:req.context.session._id},{$set:{revokedAt:new Date()}}); res.clearCookie('mal_session',{httpOnly:true,sameSite:'strict',path:'/',secure:process.env.LAB_SECURE_COOKIES === 'true'}); res.clearCookie('mal_csrf',{sameSite:'strict',path:'/',secure:process.env.LAB_SECURE_COOKIES === 'true'}); res.status(204).end(); } catch(e) {next(e);} });
   async function access(req,id,write=false) {
     if (!validId(id)) return null;
     const doc = await Document.findOne({_id:id,tenant:req.context.tenant._id}).lean();

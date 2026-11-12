@@ -1,6 +1,6 @@
 # Identity and authorization policy
 
-This document defines the environment policy. The current API implements bearer sessions and document authorization using synthetic fixtures. Cookie transport, login, account switching, and browser protections are planned for later checkpoints.
+This document defines the environment policy. The current application implements cookie sessions, login, account switching, and document authorization using synthetic fixtures. The future cookie-migration task will use a separately reconstructed bearer baseline.
 
 ## Identity and sessions
 
@@ -22,4 +22,4 @@ Every document belongs to a tenant and is either private or tenant-visible. Shar
 
 No role grants access to another tenant's documents. Missing or invalid tenant context fails closed. Denied writes leave persistent state unchanged. A successful switch to a separately authorized account is legitimate access, not cross-tenant disclosure.
 
-Cookie-authenticated mutations require centrally enforced CSRF and origin protections, including when the CSRF cookie is missing. Login and account activation require explicit cross-site protections. Evaluation checks actual responses and persisted state against this policy rather than trusting application-reported permissions.
+Cookie-authenticated mutations require centrally enforced CSRF and origin protections, including when the CSRF cookie is missing. Local development uses HTTP on loopback; set `LAB_SECURE_COOKIES=true` and `LAB_WEB_ORIGIN` for an HTTPS profile. Login and account activation require explicit cross-site protections. Evaluation checks actual responses and persisted state against this policy rather than trusting application-reported permissions.

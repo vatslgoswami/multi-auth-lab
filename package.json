@@ -15,6 +15,7 @@
     "start": "npm run start --workspace @multiauthlab/api",
     "doctor": "node scripts/doctor.js",
     "reset": "node apps/api/src/reset.js",
-    "test": "node --test apps/api/tests/*.test.js"
+    "test": "node --test apps/api/tests/*.test.js",
+    "test:browser": "node --test apps/web/tests/*.test.js"
   }
 }

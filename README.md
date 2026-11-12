@@ -12,13 +12,13 @@ Task + private harmful objective → agent changes → control protocol
 
 ## Current status
 
-The protected API now provides tenant-scoped documents, roles, hashed bearer sessions, revocation, and synthetic fixtures. The [identity and authorization policy](docs/security-policy.md) also describes cookie and browser behavior planned for later checkpoints. Task packages and independent evaluation are not implemented yet. No model experiments or control results have been produced.
+The application includes synthetic organizations, document access, one-time-code sign-in, cookie sessions, role selection, and saved-account switching. It keeps unsaved document text separate by account and acting role. The [security policy](docs/security-policy.md) describes the intended boundaries.
 
-The planned tasks cover migrating browser sessions to cookies, switching accounts, and searching/exporting documents. The proposed harmful outcomes are cross-tenant disclosure and writes by a revoked session.
+The planned tasks cover migrating browser sessions to cookies, switching accounts, and searching/exporting documents. Their independent baselines, reference solutions, and evaluator are not built yet. No model experiments or control results have been produced.
 
-## Run the scaffold
+## Run the application
 
-Use Node.js 24.22.3, as recorded in `.nvmrc`.
+Use Node.js 24.22.3, as recorded in `.nvmrc`, and start a local MongoDB server on port 27017. Then run:
 
 ```bash
 npm ci
@@ -26,12 +26,22 @@ npm run reset
 npm run dev
 ```
 
-Open `http://127.0.0.1:4311`. The API health endpoint is at `http://127.0.0.1:4310/api/health`. To change ports, set `LAB_API_PORT` and `LAB_WEB_PORT` in your shell before starting; `.env.example` documents the defaults. The application does not read environment files automatically. Start a local MongoDB server on port 27017 first. `npm run reset` clears and reseeds only the disposable `multiauthlab_dev` database.
+Open `http://127.0.0.1:4311` and choose a sample account. When you request a sign-in code, the local API prints it to the terminal running `npm run dev`. Codes are synthetic and are not emailed or sent to any external service. Use **Add** under Saved accounts to sign into another organization.
 
-Check local prerequisites with `npm run doctor`. Build the browser app with `npm run build`. Run API integration tests against a disposable local database with `LAB_MONGODB_URI=mongodb://127.0.0.1:27017/multiauthlab_test_manual npm test`. The browser remains a scaffold. The API currently uses public synthetic bearer credentials from `apps/api/src/fixtures.js`; login and cookie transport arrive later.
+`npm run reset` clears and reseeds only the disposable `multiauthlab_dev` database. Set `LAB_API_PORT` and `LAB_WEB_PORT` in your shell to change ports; the application does not load environment files automatically. `npm run doctor` checks local prerequisites.
+
+Run API tests and actual browser tests against a disposable local database:
+
+```bash
+npx playwright install chromium
+LAB_MONGODB_URI=mongodb://127.0.0.1:27017/multiauthlab_test_manual npm test
+LAB_MONGODB_URI=mongodb://127.0.0.1:27017/multiauthlab_test_manual npm run test:browser
+```
+
+Browser tests start their own API and web servers on ports 4310 and 4311; stop the development servers first. Build the browser application with `npm run build`.
 
 ## Planned evaluation
 
 A coding agent will work on a task-specific application baseline. A control protocol will select the submitted changes, after which a separate evaluator will replay them on fresh synthetic state. Functionality and adversarial outcomes will be reported separately. Test reports and application logs produced by the submitted code will not be trusted as ground truth.
 
-The initial evaluator will use isolated containers on a Linux host. This repository does not yet implement that isolation or claim compatibility with LinuxArena's tooling.
+The initial evaluator will use isolated containers on a Linux host. This repository does not yet implement that isolation or claim compatibility with LinuxArena's tooling. The application is a local research environment; its synthetic authentication and terminal inbox are not designed for production deployment.
