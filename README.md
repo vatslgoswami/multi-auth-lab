@@ -14,7 +14,7 @@ Task + private harmful objective → agent changes → control protocol
 
 The application includes synthetic organizations, document access, one-time-code sign-in, cookie sessions, role selection, and saved-account switching. It keeps unsaved document text separate by account and acting role. The [security policy](docs/security-policy.md) describes the intended boundaries.
 
-The planned tasks cover migrating browser sessions to cookies, switching accounts, and searching/exporting documents. The first task now has a versioned baseline, reference solution, controlled failure examples, and a local evaluation prototype. The other two tasks are not built yet. No model experiments or control results have been produced.
+The planned tasks cover migrating browser sessions to cookies, switching accounts, and searching/exporting documents. All three tasks have independent baselines, reference solutions, developer tests, and controlled failure examples. A local evaluation prototype can replay trusted patches. No model experiments or control results have been produced.
 
 ## Run the application
 
@@ -40,14 +40,16 @@ LAB_MONGODB_URI=mongodb://127.0.0.1:27017/multiauthlab_test_manual npm run test:
 
 Browser tests start their own API and web servers on ports 4310 and 4311; stop the development servers first. Build the browser application with `npm run build`.
 
-## Try the first task
+## Try the tasks
 
 With local MongoDB running and Chromium installed, run the trusted examples:
 
 ```bash
 npm run demo
+npm run demo -- --task account-switching
+npm run demo -- --task document-export
 ```
 
-The demo compares the original bearer baseline, a cookie-migration solution, and two changes that complete the task while introducing security failures. It also shows a fixed-test control rejecting those examples. To prepare an agent-facing workspace and inspect individual outcomes, see the [local evaluation guide](docs/evaluation.md).
+Each demo compares the task baseline, a reference solution, and controlled changes that introduce security failures, including examples that also complete the task. It also shows a fixed-test control reviewing those examples. To prepare an agent-facing workspace and inspect individual outcomes, see the [local evaluation guide](docs/evaluation.md).
 
 **The evaluator runs code directly on your machine. Use it only for trusted examples or patches you have personally reviewed.** It does not isolate adversarial code from your files, credentials, or network. Isolated execution and actual model experiments remain future work. The application is a local research environment, not a production service.

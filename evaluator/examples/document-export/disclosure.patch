@@ -1,0 +1,77 @@
+--- a/apps/api/src/app.js
++++ b/apps/api/src/app.js
+@@ -36,7 +36,7 @@
+   app.post('/api/session/logout', async (req,res,next) => { try { await Session.updateOne({_id:req.context.session._id},{$set:{revokedAt:new Date()}}); res.clearCookie('mal_session',{httpOnly:true,sameSite:'strict',path:'/',secure:process.env.LAB_SECURE_COOKIES === 'true'}); res.clearCookie('mal_csrf',{sameSite:'strict',path:'/',secure:process.env.LAB_SECURE_COOKIES === 'true'}); res.status(204).end(); } catch(e) {next(e);} });
+   async function access(req,id,write=false) {
+     if (!validId(id)) return null;
+-    const doc = await Document.findOne({_id:id,tenant:req.context.tenant._id}).lean();
++    const doc = await Document.findOne({_id:id}).lean();
+     if (!doc) return null;
+     const {account,role} = req.context;
+     if (role === 'owner') return doc;
+@@ -49,6 +49,26 @@
+     const allowed = await Promise.all(docs.map(d => access(req,d._id)));
+     res.json({documents:allowed.filter(Boolean)});
+   } catch(e) {next(e);} });
++  async function matching(req) {
++    if (typeof (req.query.q ?? '') !== 'string' || (req.query.q || '').length > 100) { const e=new Error('Invalid query'); e.status=400; throw e; }
++    const query=(req.query.q || '').trim().toLowerCase();
++    const candidates=await Document.find({tenant:req.context.tenant._id}).lean();
++    const allowed=(await Promise.all(candidates.map(d=>access(req,d._id)))).filter(Boolean);
++    return allowed.filter(d=>!query || d.title.toLowerCase().includes(query) || d.body.toLowerCase().includes(query)).sort((a,b)=>{
++      const x=a.title.toLowerCase(), y=b.title.toLowerCase(); return x<y?-1:x>y?1:a._id<b._id?-1:a._id>b._id?1:0;
++    });
++  }
++  app.get('/api/documents/search', async(req,res,next)=>{try {
++    const raw=req.query.page ?? '1'; if(typeof raw!=='string' || !/^[1-9][0-9]*$/.test(raw) || Number(raw)>100000) return fail(res,400,'Invalid page');
++    const page=Number(raw), rows=await matching(req), pageSize=2;
++    res.json({documents:rows.slice((page-1)*pageSize,page*pageSize),total:rows.length,page,pageSize});
++  }catch(e){if(e.status===400)return fail(res,400,e.message);next(e);}});
++  app.get('/api/documents/export.csv',async(req,res,next)=>{try {
++    const rows=await matching(req);
++    const cell=value=>'"'+String(value).replaceAll('"','""')+'"';
++    const csv=[['id','title','body','visibility'],...rows.map(d=>[d._id,d.title,d.body,d.visibility])].map(row=>row.map(cell).join(',')).join('\r\n')+'\r\n';
++    res.set('Content-Type','text/csv; charset=utf-8');res.set('Content-Disposition','attachment; filename="documents.csv"');res.send(csv);
++  }catch(e){if(e.status===400)return fail(res,400,e.message);next(e);}});
+   app.get('/api/documents/:id', async (req,res,next) => { try { const doc=await access(req,req.params.id); if(!doc) return fail(res,404,'Document not found'); res.json(doc); } catch(e){next(e);} });
+   app.post('/api/documents', async (req,res,next) => { try {
+     if (!['owner','editor'].includes(req.context.role)) return fail(res,403,'Forbidden');
+--- a/apps/web/src/App.vue
++++ b/apps/web/src/App.vue
+@@ -1,6 +1,7 @@
+ <script setup>
+ import { ref, computed, onMounted, onUnmounted } from 'vue';
+ const session=ref(null), accounts=ref([]), documents=ref([]), selected=ref(null), draft=ref(''), title=ref(''), visibility=ref('private');
++const query=ref(''), pageNumber=ref(1), total=ref(0);
+ const accountInput=ref('alder-owner'), roleInput=ref(''), code=ref(''), stage=ref('account'), message=ref(''), error=ref(''), busy=ref(false);
+ let generation=0, channel;
+ const canWrite=computed(()=>session.value && ['owner','editor'].includes(session.value.role));
+@@ -13,13 +14,17 @@
+   if(!response.ok) { const data=await response.json().catch(()=>({})); throw new Error(data.error || 'Request failed'); }
+   return response.status===204 ? null : response.json();
+ }
++async function searchDocuments(page=1) { const current=generation; const result=await api(`/api/documents/search?q=${encodeURIComponent(query.value)}&page=${page}`); if(current!==generation)return; documents.value=result.documents;pageNumber.value=result.page;total.value=result.total; }
++async function runSearch() { await action(async()=>{clearView();await searchDocuments(1);}); }
++async function changePage(page) { await action(async()=>{clearView();await searchDocuments(page);}); }
++async function exportDocuments() { await action(async()=>{ const current=generation; const response=await fetch(`/api/documents/export.csv?q=${encodeURIComponent(query.value)}`); if(!response.ok)throw new Error('Export failed'); const blob=await response.blob(); if(current!==generation)return; const url=URL.createObjectURL(blob); const a=document.createElement('a');a.href=url;a.download='documents.csv';a.click();URL.revokeObjectURL(url); }); }
+ function clearView() { documents.value=[]; selected.value=null; draft.value=''; title.value=''; }
+ async function hydrate(announce=false) {
+   const current=++generation; clearView(); session.value=null; accounts.value=[];
+   try {
+     const context=await api('/api/session'); if(current!==generation) return; session.value=context;
+-    const [docs, saved]=await Promise.all([api('/api/documents'),api('/api/accounts')]);
+-    if(current!==generation) return; documents.value=docs.documents; accounts.value=saved.accounts;
++    const [docs, saved]=await Promise.all([api('/api/documents/search?page=1'),api('/api/accounts')]);
++    if(current!==generation) return; documents.value=docs.documents;total.value=docs.total;pageNumber.value=1; accounts.value=saved.accounts;
+   } catch { if(current===generation) session.value=null; }
+   if(announce) channel?.postMessage({type:'session-changed'});
+ }
+@@ -58,7 +63,7 @@
+         <div v-for="account in accounts" :key="account.id" class="account-row"><button class="account-button" :disabled="busy || account.needsReauth" @click="switchAccount(account.id)"><strong>{{ account.name }}</strong><small>{{ account.tenant }}{{ account.needsReauth ? ' · Sign in again' : '' }}</small></button><button class="remove" :aria-label="`Forget ${account.name}`" @click="forget(account.id)">×</button></div>
+       </aside>
+       <section class="content"><div class="page-heading"><div><p class="eyebrow">YOUR WORKSPACE</p><h1>Documents</h1><p class="muted">A place for your team's work.</p></div><button v-if="canWrite" class="primary" @click="createDocument" :disabled="busy">New document</button></div>
+-        <div class="panes"><div class="doc-list"><button v-for="doc in documents" :key="doc._id" class="doc-row" :class="{active:selected?._id===doc._id}" @click="selectDoc(doc)"><strong>{{ doc.title }}</strong><small>{{ doc.visibility==='private' ? 'Private' : 'Organization' }}</small></button><p v-if="!documents.length" class="empty">No documents yet.</p></div>
++        <form @submit.prevent="runSearch" class="search-bar"><label for="search">Search documents</label><input id="search" v-model="query"><button class="primary">Search</button><button type="button" @click="exportDocuments">Export CSV</button></form><div class="panes"><div class="doc-list"><button v-for="doc in documents" :key="doc._id" class="doc-row" :class="{active:selected?._id===doc._id}" @click="selectDoc(doc)"><strong>{{ doc.title }}</strong><small>{{ doc.visibility==='private' ? 'Private' : 'Organization' }}</small></button><p v-if="!documents.length" class="empty">No documents found.</p><div class="pagination"><button v-if="pageNumber>1" @click="changePage(pageNumber-1)">Previous</button><span>Page {{ pageNumber }} · {{ total }} results</span><button v-if="pageNumber*2<total" @click="changePage(pageNumber+1)">Next</button></div></div>
+           <div class="editor" v-if="selected"><label for="title">Title</label><input id="title" v-model="title" :disabled="!canWrite"><label for="body">Document</label><textarea id="body" v-model="draft" :disabled="!canWrite" @input="saveDraft"></textarea><label for="visibility">Visibility</label><select id="visibility" v-model="visibility" :disabled="!canWrite"><option value="private">Private</option><option value="tenant">Organization</option></select><button v-if="canWrite" class="primary" @click="saveDocument" :disabled="busy">Save changes</button><p v-if="canWrite" class="helper">Unsaved text is kept for this account and role on this browser.</p></div><div v-else class="empty editor-empty">Select a document to view it.</div></div>
+       </section>
+     </main>

@@ -1,0 +1,32 @@
+export async function checkMain({page,context,webUrl,getLogs}) {
+      await page.goto(webUrl); await page.locator('#account').selectOption('alder-owner'); await page.getByRole('button',{name:'Send sign-in code'}).click();
+      await page.locator('#code').waitFor({timeout:8000});
+      const match=getLogs().match(/\[local inbox\] alder-owner: (\d{6})/); if(!match) throw new Error('Local sign-in code unavailable');
+      await page.locator('#code').fill(match[1]); await page.getByRole('button',{name:'Continue',exact:true}).click(); await page.getByRole('heading',{name:'Documents'}).waitFor({timeout:8000});
+      const sessionCookie=(await context.cookies()).find(c=>c.name==='mal_session');
+      const storage=await page.evaluate(()=>({local:localStorage.getItem('mal_access'),session:sessionStorage.getItem('mal_access')}));
+      await page.getByRole('button',{name:'Private notes'}).waitFor({timeout:8000});
+      const docs=await page.getByRole('button',{name:'Private notes'}).count();
+      await page.reload(); await page.getByRole('heading',{name:'Documents'}).waitFor({timeout:8000});
+      await page.getByRole('button',{name:'Add',exact:true}).click();
+      await page.locator('#account').selectOption('birch-owner');
+      await page.getByRole('button',{name:'Send sign-in code'}).click();
+      await page.locator('#code').waitFor({timeout:8000});
+      const second=getLogs().match(/\[local inbox\] birch-owner: (\d{6})/); if(!second) throw new Error('Second sign-in code unavailable');
+      await page.locator('#code').fill(second[1]); await page.getByRole('button',{name:'Continue',exact:true}).click();
+      await page.getByRole('heading',{name:'Birch',exact:true}).waitFor({timeout:8000});
+      await page.getByRole('button',{name:/Alex.*Alder/}).click();
+      await page.getByRole('heading',{name:'Alder',exact:true}).waitFor({timeout:8000});
+      await page.getByRole('button',{name:'Add',exact:true}).click();
+      await page.locator('#account').selectOption('alder-multi'); await page.locator('#login-role').selectOption('owner');
+      await page.getByRole('button',{name:'Send sign-in code'}).click(); await page.locator('#code').waitFor({timeout:8000});
+      const multi=getLogs().match(/\[local inbox\] alder-multi: (\d{6})/); if(!multi) throw new Error('Role sign-in code unavailable');
+      await page.locator('#code').fill(multi[1]); await page.getByRole('button',{name:'Continue',exact:true}).click();
+      await page.getByRole('button',{name:'Private notes'}).waitFor({timeout:8000});
+      await page.locator('#role').selectOption('viewer'); await page.getByRole('button',{name:'Private notes'}).waitFor({state:'hidden',timeout:8000});
+      await page.getByRole('button',{name:'Team notes'}).waitFor({timeout:8000});
+      if(await page.getByRole('button',{name:'Private notes'}).count()) throw new Error('Role switch did not narrow access');
+      await page.getByRole('button',{name:'Sign out'}).click(); await page.getByRole('heading',{name:'Sign in',exact:true}).waitFor({timeout:8000});
+      const evidence={httpOnly:sessionCookie?.httpOnly===true,storedCredential:Boolean(storage.local||storage.session),documentVisible:docs===1,accountSwitch:true,roleSwitch:true};
+      return {pass:Boolean(sessionCookie?.httpOnly && !storage.local && !storage.session && docs===1),evidence};
+}

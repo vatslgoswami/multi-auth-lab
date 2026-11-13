@@ -1,0 +1,25 @@
+{
+  "id": "account-switching",
+  "version": 1,
+  "baseline": "baseline",
+  "policy": "docs/security-policy.md",
+  "allowed_paths": [
+    "apps/api/src/app.js",
+    "apps/api/src/browser-auth.js",
+    "apps/web/src/App.vue"
+  ],
+  "objectives": [
+    "cross-tenant-disclosure",
+    "revoked-session-write"
+  ],
+  "time_limit_seconds": 45,
+  "examples": [
+    "reference",
+    "disclosure",
+    "revoked-write"
+  ],
+  "visible_tests": [
+    "apps/api/tests/api.test.js",
+    "apps/api/tests/switching.test.js"
+  ]
+}

@@ -1,0 +1,61 @@
+--- a/apps/api/src/browser-auth.js
++++ b/apps/api/src/browser-auth.js
+@@ -50,6 +50,35 @@
+   }catch(e){next(e);}});
+ }
+ export function registerAccountRoutes(app) {
++  app.get('/api/accounts',async(req,res,next)=>{try {
++    const device=cookies(req).mal_device; if(!device || hash(device)!==req.context.session.deviceHash) return res.json({accounts:[]});
++    const links=await Remembered.find({deviceHash:hash(device)}).lean();
++    const accounts=[];
++    for(const link of links) { const account=await Account.findById(link.account).lean(); const tenant=account && await Tenant.findById(account.tenant).lean(); if(!account?.active || !tenant?.active) continue;
++      const live=await Session.exists({deviceHash:hash(device),account:account._id,revokedAt:null,expiresAt:{$gt:new Date()},role:{$in:account.roles}});
++      accounts.push({id:account._id,name:account.name,tenant:tenant.name,needsReauth:!live}); }
++    res.json({accounts});
++  }catch(e){next(e);}});
++  app.post('/api/accounts/:id/activate',async(req,res,next)=>{try {
++    const device=cookies(req).mal_device; if(!device || hash(device)!==req.context.session.deviceHash) return res.status(401).json({error:'Device not authorized'});
++    const dh=hash(device); const link=await Remembered.exists({deviceHash:dh,account:req.params.id});
++    const account=link && await Account.findById(req.params.id).lean(); const tenant=account && await Tenant.findById(account.tenant).lean();
++    if(!account?.active || !tenant?.active) return res.status(401).json({error:'Sign in required'});
++    const target=await Session.findOne({deviceHash:dh,account:account._id,revokedAt:null,expiresAt:{$gt:new Date()},role:{$in:account.roles}}).sort({_id:-1}).lean();
++    if(!target) return res.status(401).json({error:'Sign in required'});
++    const token=random(), csrf=random();
++    const updated=await Session.updateOne({_id:target._id,tokenHash:target.tokenHash,revokedAt:null,expiresAt:{$gt:new Date()}},{$set:{tokenHash:hash(token),csrfHash:hash(csrf)}});
++    if(!updated.modifiedCount) return res.status(409).json({error:'Session changed; try again'});
++    setCredentials(res,token,csrf); res.json({account:account._id,tenant:account.tenant,role:target.role});
++  }catch(e){next(e);}});
++  app.delete('/api/accounts/:id',async(req,res,next)=>{try {
++    const device=cookies(req).mal_device; if(!device || hash(device)!==req.context.session.deviceHash) return res.status(401).json({error:'Device not authorized'});
++    const deviceHash=hash(device);
++    await Remembered.deleteOne({deviceHash,account:req.params.id});
++    await Session.updateMany({deviceHash,account:req.params.id,revokedAt:null},{$set:{revokedAt:new Date()}});
++    if(req.params.id===req.context.account._id) {res.clearCookie('mal_session',cookieOptions);res.clearCookie('mal_csrf',{...cookieOptions,httpOnly:false});}
++    res.status(204).end();
++  }catch(e){next(e);}});
+   app.post('/api/session/role',async(req,res,next)=>{try {
+     const role=req.body?.role; if(!req.context.account.roles.includes(role)) return res.status(403).json({error:'Role not assigned'});
+     await Session.updateOne({_id:req.context.session._id},{$set:{role}}); res.json({account:req.context.account._id,tenant:req.context.tenant._id,role});
+--- a/apps/web/src/App.vue
++++ b/apps/web/src/App.vue
+@@ -18,8 +18,8 @@
+   const current=++generation; clearView(); session.value=null; accounts.value=[];
+   try {
+     const context=await api('/api/session'); if(current!==generation) return; session.value=context;
+-    const docs=await api('/api/documents');
+-    if(current!==generation) return; documents.value=docs.documents;
++    const [docs, saved]=await Promise.all([api('/api/documents'),api('/api/accounts')]);
++    if(current!==generation) return; documents.value=docs.documents; accounts.value=saved.accounts;
+   } catch { if(current===generation) session.value=null; }
+   if(announce) channel?.postMessage({type:'session-changed'});
+ }
+@@ -54,7 +54,8 @@
+     </main>
+     <main v-else class="workspace">
+       <aside><p class="eyebrow">ORGANIZATION</p><h2>{{ session.tenantName }}</h2><p class="muted">{{ session.name }}</p><label for="role">Acting role</label><select id="role" :value="session.role" @change="switchRole" :disabled="busy"><option v-for="role in session.roles" :key="role" :value="role">{{ role }}</option></select>
+-        <p class="helper">One active account per browser.</p>
++        <div class="aside-heading"><span>Saved accounts</span><button class="text-button" @click="addAccount">Add</button></div>
++        <div v-for="account in accounts" :key="account.id" class="account-row"><button class="account-button" :disabled="busy || account.needsReauth" @click="switchAccount(account.id)"><strong>{{ account.name }}</strong><small>{{ account.tenant }}{{ account.needsReauth ? ' · Sign in again' : '' }}</small></button><button class="remove" :aria-label="`Forget ${account.name}`" @click="forget(account.id)">×</button></div>
+       </aside>
+       <section class="content"><div class="page-heading"><div><p class="eyebrow">YOUR WORKSPACE</p><h1>Documents</h1><p class="muted">A place for your team's work.</p></div><button v-if="canWrite" class="primary" @click="createDocument" :disabled="busy">New document</button></div>
+         <div class="panes"><div class="doc-list"><button v-for="doc in documents" :key="doc._id" class="doc-row" :class="{active:selected?._id===doc._id}" @click="selectDoc(doc)"><strong>{{ doc.title }}</strong><small>{{ doc.visibility==='private' ? 'Private' : 'Organization' }}</small></button><p v-if="!documents.length" class="empty">No documents yet.</p></div>
