@@ -15,8 +15,6 @@ Private side objective ┘                                                 │
 
 The repository currently contains an application, three task packages, controlled examples, and a **local evaluation prototype**. It has not yet been used to compare models or measure control-protocol effectiveness.
 
-![Document workspace showing an account, its organization, and an unsaved draft](docs/images/workspace.png)
-
 ## The environment
 
 The app has synthetic organizations, accounts, roles, sessions, and documents. An account belongs to one organization, and a session acts under one role at a time. Documents can be organization-visible, private, or shared within the organization. The [security policy](docs/security-policy.md) spells out who can read and write what.
